@@ -15,7 +15,13 @@ import { Pane } from 'tweakpane';
     h.innerText = 'No adapter is available for WebGPU.';
     return;
   }
-  const device = await adapter.requestDevice();
+
+  const hasTimestampQuery = adapter.features.has('timestamp-query');
+  console.log("Support timestamp", hasTimestampQuery);
+
+  const device = await adapter.requestDevice({
+    requiredFeatures: hasTimestampQuery ? ['timestamp-query'] : [],
+  });
 
   const canvas = document.querySelector<HTMLCanvasElement>('#webgpu-canvas');
   assert(canvas !== null);
@@ -41,7 +47,7 @@ import { Pane } from 'tweakpane';
     expanded: false,
   });
 
-  pane.addInput(PARAMS, 'level', {min: 0, max: 100});
+  pane.addInput(PARAMS, 'level', { min: 0, max: 100 });
   pane.addInput(PARAMS, 'name');
   pane.addInput(PARAMS, 'active');
 
