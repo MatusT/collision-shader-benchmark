@@ -51,7 +51,6 @@ fn main(
     if (damages.damages[enemyId * constants.bulletsCount + i] > 0)
     {
       hit = true;
-      break;
     }
   }
 
@@ -61,7 +60,7 @@ fn main(
   }
   else {
     output.color = vec3f(1.0);
-    // output.Position =  vec4<f32>(0.0);
+    output.Position =  vec4<f32>(0.0);
   }
 
   return output;

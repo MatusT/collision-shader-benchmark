@@ -108,23 +108,16 @@ export default function init(
   });
 
   const enemiesCount = 8192;
-  const bulletsCount = 2048;
+  const bulletsCount = 512;
 
-  /** Storage for timestamp query results */
   let querySet: GPUQuerySet | undefined = undefined;
-  /** Timestamps are resolved into this buffer */
   let resolveBuffer: GPUBuffer | undefined = undefined;
-  /** Pool of spare buffers for MAP_READing the timestamps back to CPU. A buffer
-   * is taken from the pool (if available) when a readback is needed, and placed
-   * back into the pool once the readback is done and it's unmapped. */
   const spareResolveResultBuffers = [];
 
   let t = 0;
   let computePassDurationSum = 0;
   let timerSamples = 0;
   
-  /*
-   */
   let constantsBuffer = device.createBuffer({
     size: 128,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
@@ -145,6 +138,7 @@ export default function init(
   device.queue.writeBuffer(enemiesBuffer, 0, enemiesArray.buffer, 0, enemiesArray.buffer.byteLength);
 
   let bulletsBuffer = device.createBuffer({
+    label: "Bullets Buffer",
     size: bulletsCount * 32,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
   });
@@ -154,7 +148,7 @@ export default function init(
   {
     bulletsArray.set([
       Math.random() - 0.5, Math.random() - 0.5, // position
-      0.025, 0.025, // size
+      0.010, 0.010, // size
       1.0, 0.0, // axisX
       0.0, -1.0, // axisY
     ], 8 * i);
@@ -163,6 +157,7 @@ export default function init(
   device.queue.writeBuffer(bulletsBuffer, 0, bulletsArray.buffer, 0, bulletsArray.buffer.byteLength);
 
   let resultsBuffer = device.createBuffer({
+    label: "Results Buffer",
     size: enemiesCount * bulletsCount * 4,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
   });
@@ -254,19 +249,19 @@ export default function init(
       const passEncoder = commandEncoder.beginComputePass(computePassDescriptor);
       passEncoder.setPipeline(collisionPipeline);
       passEncoder.setBindGroup(0, collisionBindGroup);
-      passEncoder.dispatchWorkgroups(enemiesCount / 8, bulletsCount / 8);
+      passEncoder.dispatchWorkgroups(enemiesCount / 32, 1, 1);
       passEncoder.end();
     }
 
     const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
-
+    passEncoder.setPipeline(enemiesPipeline);
+    passEncoder.setBindGroup(0, renderEnemiesBindGroup);
+    passEncoder.draw(enemiesCount * 6, 1, 0, 0);
     passEncoder.setPipeline(bulletsPipeline);
     passEncoder.setBindGroup(0, renderBulletsBindGroup);
     passEncoder.draw(bulletsCount * 6, 1, 0, 0);
 
-    passEncoder.setPipeline(enemiesPipeline);
-    passEncoder.setBindGroup(0, renderEnemiesBindGroup);
-    passEncoder.draw(enemiesCount * 6, 1, 0, 0);
+
 
     passEncoder.end();
 

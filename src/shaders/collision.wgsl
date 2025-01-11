@@ -34,62 +34,46 @@ struct Damages {
 @binding(2) @group(0) var<storage, read> bullets : Bullets;
 @binding(3) @group(0) var<storage, read_write> damages : Damages;
 
-@compute @workgroup_size(8, 8)
+const workgroup_len : u32 = 32;
+
+var<workgroup> enemiesWorkgroup: array<Enemy, workgroup_len>;
+var<workgroup> bulletsWorkgroup: array<Bullet, workgroup_len>;
+
+@compute @workgroup_size(32, 1)
 fn main(
     @builtin(global_invocation_id) GlobalInvocationID: vec3u,
-    @builtin(local_invocation_id) LocalInvocationID: vec3u
+    @builtin(local_invocation_id) LocalInvocationID: vec3u,
+    @builtin(workgroup_id) WorkGroupId: vec3u
 ) {
-    var enemyindex = GlobalInvocationID.x;
-    var bulletIndex = GlobalInvocationID.y;
+    enemiesWorkgroup[LocalInvocationID.x] = enemies.enemies[GlobalInvocationID.x];
 
-    var bullet = bullets.bullets[bulletIndex];
-    var bulletPosition = bullet.position;
-    var bulletSize = bullet.halfSize;
-    var bulletAxisX = bullet.axisX;
-    var bulletAxisY = bullet.axisY;
+    for (var globalBulletOffset = 0u; globalBulletOffset < constants.bulletsCount; globalBulletOffset += 32) {
+        bulletsWorkgroup[LocalInvocationID.x] = bullets.bullets[globalBulletOffset + LocalInvocationID.x];
+        workgroupBarrier();
 
-    //for (var i = 0u; i < arrayLength(&enemies.enemies); i++) {
-    var enemy = enemies.enemies[enemyindex];
+        for (var enemyIndex = 0u; enemyIndex < 32u; enemyIndex++) {
+            var bullet = bulletsWorkgroup[LocalInvocationID.x];
+            var bulletPosition = bullet.position;
+            var bulletSize = bullet.halfSize;
+            var bulletAxisX = bullet.axisX;
+            var bulletAxisY = bullet.axisY;
 
-    var aabbHalfWidth = enemy.halfSize.x;
-    var aabbHalfHeight = enemy.halfSize.y;
+            var aabbHalfWidth = enemiesWorkgroup[enemyIndex].halfSize.x;
+            var aabbHalfHeight = enemiesWorkgroup[enemyIndex].halfSize.y;
 
-    var T = bulletPosition - enemy.position;
-    var C1 = abs(T.x) > abs(bulletSize.x * bulletAxisX.x) + abs(bulletSize.y * bulletAxisY.x) + aabbHalfWidth;
-    var C2 = abs(T.y) > abs(bulletSize.x * bulletAxisX.y) + abs(bulletSize.y * bulletAxisY.y) + aabbHalfHeight;
-    var C3 = abs(dot(T, bulletAxisX)) > (abs(aabbHalfWidth * bulletAxisX.x) + abs(aabbHalfHeight * bulletAxisX.y) + bulletSize.x);
-    var C4 = abs(dot(T, bulletAxisY)) > (abs(aabbHalfWidth * bulletAxisY.x) + abs(aabbHalfHeight * bulletAxisY.y) + bulletSize.y);
+            var T = bulletPosition - enemiesWorkgroup[enemyIndex].position;
+            var C1 = abs(T.x) > abs(bulletSize.x * bulletAxisX.x) + abs(bulletSize.y * bulletAxisY.x) + aabbHalfWidth;
+            var C2 = abs(T.y) > abs(bulletSize.x * bulletAxisX.y) + abs(bulletSize.y * bulletAxisY.y) + aabbHalfHeight;
+            var C3 = abs(dot(T, bulletAxisX)) > (abs(aabbHalfWidth * bulletAxisX.x) + abs(aabbHalfHeight * bulletAxisX.y) + bulletSize.x);
+            var C4 = abs(dot(T, bulletAxisY)) > (abs(aabbHalfWidth * bulletAxisY.x) + abs(aabbHalfHeight * bulletAxisY.y) + bulletSize.y);
 
-    if (!C1 && !C2 && !C3 && !C4) {
-        damages.damages[enemyindex * constants.bulletsCount + bulletIndex] = 1;
-    } else {
-        damages.damages[enemyindex * constants.bulletsCount + bulletIndex] = 0;
+            if !C1 && !C2 && !C3 && !C4 {
+                damages.damages[(WorkGroupId.x * 32 + enemyIndex) * constants.bulletsCount + globalBulletOffset + LocalInvocationID.x] = 1;
+            } else {
+                damages.damages[(WorkGroupId.x * 32 + enemyIndex) * constants.bulletsCount + globalBulletOffset + LocalInvocationID.x] = 0;
+            }
+        }
+
+        workgroupBarrier();
     }
-
-        
-    //}
-
-    // Version #1
-    // var index = GlobalInvocationID.x;
-
-    // var bullet = bullets.bullets[index];
-    // var bulletPosition = bullet.position;
-    // var bulletSize = bullet.halfSize;
-    // var bulletAxisX = bullet.axisX;
-    // var bulletAxisY = bullet.axisY;
-
-    // for (var i = 0u; i < arrayLength(&enemies.enemies); i++) {
-    //     var enemy = enemies.enemies[i];
-
-    //     var aabbHalfWidth = enemy.halfSize.x;
-    //     var aabbHalfHeight = enemy.halfSize.y;
-        
-    //     var T = bulletPosition - enemy.position;
-    //     var C1 = abs(T.x) > abs(bulletSize.x * bulletAxisX.x) + abs(bulletSize.y * bulletAxisY.x) + aabbHalfWidth;
-    //     var C2 = abs(T.y) > abs(bulletSize.x * bulletAxisX.y) + abs(bulletSize.y * bulletAxisY.y) + aabbHalfHeight;
-    //     var C3 = abs(dot(T, bulletAxisX)) > (abs(aabbHalfWidth * bulletAxisX.x) + abs(aabbHalfHeight * bulletAxisX.y) + bulletSize.x);
-    //     var C4 = abs(dot(T, bulletAxisY)) > (abs(aabbHalfWidth * bulletAxisY.x) + abs(aabbHalfHeight * bulletAxisY.y) + bulletSize.y);
-
-    //     damages.damages[i * 128 + LocalInvocationID.x] = u32(C1) + u32(C2) + u32(C3) + u32(C4);
-    // }
 }
