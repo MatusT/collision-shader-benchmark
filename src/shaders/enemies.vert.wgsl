@@ -44,7 +44,7 @@ fn main(
   
   var output : VertexOutput;
   output.Position =  vec4<f32>(enemy.halfSize * pos[VertexIndex % 6] + enemy.position, 0.0, 1.0);
-
+  
   var hit = false;
   for (var i = u32(0); i < u32(constants.bulletsCount); i++)
   {
@@ -60,7 +60,7 @@ fn main(
   }
   else {
     output.color = vec3f(1.0);
-    output.Position =  vec4<f32>(0.0);
+    // output.Position =  vec4<f32>(0.0);
   }
 
   return output;

@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "tweakpane": "^3.1.8",
+    "webgpu-utils": "^1.9.3",
     "wgpu-matrix": "^3.2.0"
   }
 }

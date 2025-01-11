@@ -3,6 +3,11 @@ import triangleVertWGSL from './shaders/enemies.vert.wgsl';
 import bulletsVertWGSL from './shaders/bullets.vert.wgsl';
 import fragWGSL from './shaders/red.frag.wgsl';
 import collisionShader from './shaders/collision.wgsl';
+import {
+  makeShaderDataDefinitions,
+  makeStructuredView
+} from 'webgpu-utils';
+import { Pane } from 'tweakpane';
 
 export default function init(
   context: GPUCanvasContext,
@@ -15,8 +20,47 @@ export default function init(
     alphaMode: 'opaque',
   });
 
+  // Tweakpane: easily adding tweak control for parameters.
+  const PARAMS = {
+    cell: 0,
+    name: 'Test',
+    active: true,
+  };
+
+  const pane = new Pane({
+    title: 'Debug',
+    expanded: false,
+  });
+
+  const cellIndexInput = pane.addInput(PARAMS, 'cell', { min: 0, max: 255, step: 1 });
+  pane.addInput(PARAMS, 'name');
+  pane.addInput(PARAMS, 'active');
+
+
   const enemiesPipeline = device.createRenderPipeline({
-    layout: 'auto',
+    layout: device.createPipelineLayout({
+      bindGroupLayouts: [
+        device.createBindGroupLayout({
+          entries: [
+            {
+              binding: 0,
+              visibility: GPUShaderStage.VERTEX,
+              buffer: { type: "uniform" }
+            },
+            {
+              binding: 1,
+              visibility: GPUShaderStage.VERTEX,
+              buffer: { type: "read-only-storage" }
+            },
+            {
+              binding: 2,
+              visibility: GPUShaderStage.VERTEX,
+              buffer: { type: "read-only-storage" }
+            }
+          ]
+        })
+      ]
+    }),
     vertex: {
       module: device.createShaderModule({
         code: triangleVertWGSL,
@@ -99,13 +143,17 @@ export default function init(
       })
     ],
   });
+
+  const collisionShaderModule = device.createShaderModule({ code: collisionShader, });
   const collisionPipeline = device.createComputePipeline({
     layout: collisionPipelineLayout,
     compute: {
-      module: device.createShaderModule({ code: collisionShader, }),
+      module: collisionShaderModule,
       entryPoint: 'main',
     }
   });
+
+  const definitions = makeShaderDataDefinitions(collisionShader);
 
   const enemiesCount = 8192;
   const bulletsCount = 512;
@@ -117,7 +165,7 @@ export default function init(
   let t = 0;
   let computePassDurationSum = 0;
   let timerSamples = 0;
-  
+
   let constantsBuffer = device.createBuffer({
     size: 128,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
@@ -129,23 +177,14 @@ export default function init(
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
   });
 
-  let enemiesArray = new Float32Array(enemiesCount * 4);
-  for(let i = 0; i < enemiesCount; i++)
-  {
-    enemiesArray.set([Math.random() - 0.5, Math.random() - 0.5, 0.015, 0.015], 4 * i);
+  let enemies = makeStructuredView(definitions.storages.enemies, new ArrayBuffer(enemiesCount * 16));
+  for (let i = 0; i < enemiesCount; i++) {
+    enemies.views.enemies[i].position.set([Math.random() * 1.5 - 0.75, Math.random() * 1.5 - 0.75]);
+    enemies.views.enemies[i].halfSize.set([0.015, 0.015]);
   }
 
-  device.queue.writeBuffer(enemiesBuffer, 0, enemiesArray.buffer, 0, enemiesArray.buffer.byteLength);
-
-  let bulletsBuffer = device.createBuffer({
-    label: "Bullets Buffer",
-    size: bulletsCount * 32,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
-  });
-
   let bulletsArray = new Float32Array(bulletsCount * 8);
-  for(let i = 0; i < bulletsCount; i++)
-  {
+  for (let i = 0; i < bulletsCount; i++) {
     bulletsArray.set([
       Math.random() - 0.5, Math.random() - 0.5, // position
       0.010, 0.010, // size
@@ -153,6 +192,86 @@ export default function init(
       0.0, -1.0, // axisY
     ], 8 * i);
   }
+
+  const cellCount = 16;
+  const cellSpacing = 1.0 / cellCount;
+
+  const cellsCount = new Uint32Array(cellCount * cellCount);
+  for (var enemyIndex = 0; enemyIndex < enemiesCount; enemyIndex++) {
+    var gridPosition = [enemies.views.enemies[enemyIndex].position[0] * 0.5 + 0.5, enemies.views.enemies[enemyIndex].position[1] * 0.5 + 0.5];
+    var gridSize = [enemies.views.enemies[enemyIndex].halfSize[0] * 0.5, enemies.views.enemies[enemyIndex].halfSize[1] * 0.5];
+
+    var xLeft = Math.floor((Math.max(gridPosition[0] - gridSize[0], 0.0)) / cellSpacing);
+    var xRight = Math.floor((Math.min(gridPosition[0] + gridSize[0], 1.0)) / cellSpacing);
+
+    var yBottom = Math.floor((Math.max(gridPosition[1] - gridSize[1], 0.0)) / cellSpacing);
+    var yTop = Math.floor((Math.min(gridPosition[1] + gridSize[1], 1.0)) / cellSpacing);
+
+    for (var x = Math.max(xLeft, 0); x <= Math.min(15, xRight); x++) {
+      for (var y = Math.max(yBottom, 0); y <= Math.min(15, yTop); y++) {
+        var i = cellCount * y + x;
+
+        cellsCount[i]++;
+      }
+    }
+  }
+  console.log(cellsCount);
+
+  const cellsPrefixSum = new Uint32Array(cellCount * cellCount);
+  var sum = 0;
+  for (var i = 0; i < cellCount * cellCount; i++) {
+    sum += cellsCount[i];
+    cellsPrefixSum[i] = sum;
+  }
+
+  console.log(cellsPrefixSum);
+
+  const cellsEnemies = new Uint32Array(cellsPrefixSum[cellsPrefixSum.length - 1]);
+  for (var enemyIndex = 0; enemyIndex < enemiesCount; enemyIndex++) {
+    var gridPosition = [enemies.views.enemies[enemyIndex].position[0] * 0.5 + 0.5, enemies.views.enemies[enemyIndex].position[1] * 0.5 + 0.5];
+    var gridSize = [enemies.views.enemies[enemyIndex].halfSize[0] * 0.5, enemies.views.enemies[enemyIndex].halfSize[1] * 0.5];
+
+    var xLeft = Math.floor((Math.max(gridPosition[0] - gridSize[0], 0.0)) / cellSpacing);
+    var xRight = Math.floor((Math.min(gridPosition[0] + gridSize[0], 1.0)) / cellSpacing);
+
+    var yBottom = Math.floor((Math.max(gridPosition[1] - gridSize[1], 0.0)) / cellSpacing);
+    var yTop = Math.floor((Math.min(gridPosition[1] + gridSize[1], 1.0)) / cellSpacing);
+
+    for (var x = Math.max(xLeft, 0); x <= Math.min(15, xRight); x++) {
+      for (var y = Math.max(yBottom, 0); y <= Math.min(15, yTop); y++) {
+        var i = cellCount * y + x;
+
+        cellsEnemies[--cellsPrefixSum[i]] = enemyIndex;
+      }
+    }
+  }
+
+  console.log(cellsEnemies);
+
+  // let enemiesInCellCount = 0;
+  // cellIndexInput.on('change', function (ev) {
+  //   let cell = ev.value;
+
+  //   enemiesInCellCount = cellsCount[cell];
+  //   let enemiesInCell = makeStructuredView(definitions.storages.enemies, new ArrayBuffer(enemiesCount * 16));
+  //   for (let i = 0; i < enemiesInCellCount; i++) {
+  //     let enemyIndex = cellsEnemies[cellsPrefixSum[cell] + i];
+  
+  //     enemiesInCell.views.enemies[i].position.set(enemies.views.enemies[enemyIndex].position);
+  //     enemiesInCell.views.enemies[i].halfSize.set(enemies.views.enemies[enemyIndex].halfSize);
+  //   }
+
+  //   device.queue.writeBuffer(enemiesBuffer, 0, enemiesInCell.arrayBuffer, 0, enemiesInCell.arrayBuffer.byteLength);
+  // });
+
+  device.queue.writeBuffer(enemiesBuffer, 0, enemies.arrayBuffer, 0, enemies.arrayBuffer.byteLength);
+  // device.queue.writeBuffer(enemiesBuffer, 0, enemiesInCell.arrayBuffer, 0, enemiesInCell.arrayBuffer.byteLength);
+
+  let bulletsBuffer = device.createBuffer({
+    label: "Bullets Buffer",
+    size: bulletsCount * 32,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+  });
 
   device.queue.writeBuffer(bulletsBuffer, 0, bulletsArray.buffer, 0, bulletsArray.buffer.byteLength);
 
@@ -254,14 +373,14 @@ export default function init(
     }
 
     const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
+
     passEncoder.setPipeline(enemiesPipeline);
     passEncoder.setBindGroup(0, renderEnemiesBindGroup);
     passEncoder.draw(enemiesCount * 6, 1, 0, 0);
+
     passEncoder.setPipeline(bulletsPipeline);
     passEncoder.setBindGroup(0, renderBulletsBindGroup);
     passEncoder.draw(bulletsCount * 6, 1, 0, 0);
-
-
 
     passEncoder.end();
 
