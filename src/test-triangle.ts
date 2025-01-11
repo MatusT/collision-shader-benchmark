@@ -107,6 +107,9 @@ export default function init(
     }
   });
 
+  const enemiesCount = 8192;
+  const bulletsCount = 2048;
+
   /** Storage for timestamp query results */
   let querySet: GPUQuerySet | undefined = undefined;
   /** Timestamps are resolved into this buffer */
@@ -114,7 +117,7 @@ export default function init(
   /** Pool of spare buffers for MAP_READing the timestamps back to CPU. A buffer
    * is taken from the pool (if available) when a readback is needed, and placed
    * back into the pool once the readback is done and it's unmapped. */
-  const spareResultBuffers = [];
+  const spareResolveResultBuffers = [];
 
   let t = 0;
   let computePassDurationSum = 0;
@@ -129,12 +132,12 @@ export default function init(
 
   let enemiesBuffer = device.createBuffer({
     label: "Enemies Buffer",
-    size: 8192 * 16,
+    size: enemiesCount * 16,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
   });
 
-  let enemiesArray = new Float32Array(8192 * 4);
-  for(let i = 0; i < 8192; i++)
+  let enemiesArray = new Float32Array(enemiesCount * 4);
+  for(let i = 0; i < enemiesCount; i++)
   {
     enemiesArray.set([Math.random() - 0.5, Math.random() - 0.5, 0.015, 0.015], 4 * i);
   }
@@ -142,25 +145,25 @@ export default function init(
   device.queue.writeBuffer(enemiesBuffer, 0, enemiesArray.buffer, 0, enemiesArray.buffer.byteLength);
 
   let bulletsBuffer = device.createBuffer({
-    size: 128 * 48,
+    size: bulletsCount * 32,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
   });
 
-  let bulletsArray = new Float32Array(128 * 12);
-  for(let i = 0; i < 128; i++)
+  let bulletsArray = new Float32Array(bulletsCount * 8);
+  for(let i = 0; i < bulletsCount; i++)
   {
     bulletsArray.set([
       Math.random() - 0.5, Math.random() - 0.5, // position
       0.025, 0.025, // size
       1.0, 0.0, // axisX
-      0.0, 1.0, // axisY
-    ], 12 * i);
+      0.0, -1.0, // axisY
+    ], 8 * i);
   }
 
   device.queue.writeBuffer(bulletsBuffer, 0, bulletsArray.buffer, 0, bulletsArray.buffer.byteLength);
 
   let resultsBuffer = device.createBuffer({
-    size: 8192 * 4,
+    size: enemiesCount * bulletsCount * 4,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
   });
 
@@ -191,10 +194,14 @@ export default function init(
     entries: [
       {
         binding: 0,
-        resource: { buffer: enemiesBuffer }
+        resource: { buffer: constantsBuffer }
       },
       {
         binding: 1,
+        resource: { buffer: enemiesBuffer }
+      },
+      {
+        binding: 2,
         resource: { buffer: resultsBuffer }
       },
     ]
@@ -225,7 +232,8 @@ export default function init(
       ],
     };
 
-
+    const constantsArray = new Uint32Array([enemiesCount, bulletsCount]);
+    device.queue.writeBuffer(constantsBuffer, 0, constantsArray.buffer, 0, constantsArray.buffer.byteLength);
 
     const computePassDescriptor: GPUComputePassDescriptor = {};
     querySet = device.createQuerySet({
@@ -246,25 +254,24 @@ export default function init(
       const passEncoder = commandEncoder.beginComputePass(computePassDescriptor);
       passEncoder.setPipeline(collisionPipeline);
       passEncoder.setBindGroup(0, collisionBindGroup);
-      // passEncoder.dispatchWorkgroups(2);
-      passEncoder.dispatchWorkgroups(1024, 8);
+      passEncoder.dispatchWorkgroups(enemiesCount / 8, bulletsCount / 8);
       passEncoder.end();
     }
 
     const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
 
-    passEncoder.setPipeline(enemiesPipeline);
-    passEncoder.setBindGroup(0, renderEnemiesBindGroup);
-    passEncoder.draw(8192 * 6, 1, 0, 0);
-
     passEncoder.setPipeline(bulletsPipeline);
     passEncoder.setBindGroup(0, renderBulletsBindGroup);
-    passEncoder.draw(128 * 6, 1, 0, 0);
+    passEncoder.draw(bulletsCount * 6, 1, 0, 0);
+
+    passEncoder.setPipeline(enemiesPipeline);
+    passEncoder.setBindGroup(0, renderEnemiesBindGroup);
+    passEncoder.draw(enemiesCount * 6, 1, 0, 0);
 
     passEncoder.end();
 
-    let resultBuffer: GPUBuffer | undefined =
-      spareResultBuffers.pop() ||
+    let resolveResultBuffer: GPUBuffer | undefined =
+      spareResolveResultBuffers.pop() ||
       device.createBuffer({
         size: 2 * BigInt64Array.BYTES_PER_ELEMENT,
         usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
@@ -273,15 +280,15 @@ export default function init(
     commandEncoder.copyBufferToBuffer(
       resolveBuffer,
       0,
-      resultBuffer,
+      resolveResultBuffer,
       0,
-      resultBuffer.size
+      resolveResultBuffer.size
     );
 
     device.queue.submit([commandEncoder.finish()]);
 
-    resultBuffer.mapAsync(GPUMapMode.READ).then(() => {
-      const times = new BigInt64Array(resultBuffer.getMappedRange());
+    resolveResultBuffer.mapAsync(GPUMapMode.READ).then(() => {
+      const times = new BigInt64Array(resolveResultBuffer.getMappedRange());
       const computePassDuration = Number(times[1] - times[0]);
 
       // console.log(computePassDuration);
@@ -291,7 +298,7 @@ export default function init(
         computePassDurationSum += computePassDuration;
         timerSamples++;
       }
-      resultBuffer.unmap();
+      resolveResultBuffer.unmap();
 
       // Periodically update the text for the timer stats
       const kNumTimerSamplesPerUpdate = 100;
@@ -305,7 +312,7 @@ export default function init(
         computePassDurationSum = 0;
         timerSamples = 0;
       }
-      spareResultBuffers.push(resultBuffer);
+      spareResolveResultBuffers.push(resolveResultBuffer);
     });
 
     ++t;

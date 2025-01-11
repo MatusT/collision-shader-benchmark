@@ -3,7 +3,6 @@ struct Bullet {
     halfSize: vec2f,
     axisX: vec2f,
     axisY: vec2f,
-    damage: vec4<u32>,
 }
 
 struct Bullets {

@@ -1,18 +1,20 @@
+// 4 floats = 16 bytes
 struct Enemy {
   position: vec2f,
   halfSize: vec2f,
 }
 
+// 8 floats = 32 bytes
 struct Bullet {
 position: vec2f,
 halfSize: vec2f,
 axisX: vec2f,
 axisY: vec2f,
-damage: vec4<u32>,
 }
 
 struct Constants {
-  enemies: u32,
+  enemiesCount: u32,
+  bulletsCount: u32,
 }
 
 struct Enemies {
@@ -32,7 +34,6 @@ struct Damages {
 @binding(2) @group(0) var<storage, read> bullets : Bullets;
 @binding(3) @group(0) var<storage, read_write> damages : Damages;
 
-// @compute @workgroup_size(64)
 @compute @workgroup_size(8, 8)
 fn main(
     @builtin(global_invocation_id) GlobalInvocationID: vec3u,
@@ -60,9 +61,9 @@ fn main(
     var C4 = abs(dot(T, bulletAxisY)) > (abs(aabbHalfWidth * bulletAxisY.x) + abs(aabbHalfHeight * bulletAxisY.y) + bulletSize.y);
 
     if (!C1 && !C2 && !C3 && !C4) {
-        damages.damages[enemyindex * 128 + bulletIndex] = 1;
+        damages.damages[enemyindex * constants.bulletsCount + bulletIndex] = 1;
     } else {
-        damages.damages[enemyindex * 128 + bulletIndex] = 0;
+        damages.damages[enemyindex * constants.bulletsCount + bulletIndex] = 0;
     }
 
         
