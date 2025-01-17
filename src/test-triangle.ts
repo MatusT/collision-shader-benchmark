@@ -136,6 +136,27 @@ export default function init(
             binding: 3,
             visibility: GPUShaderStage.COMPUTE,
             buffer: {
+              type: "read-only-storage"
+            }
+          },
+          {
+            binding: 4,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: {
+              type: "read-only-storage"
+            }
+          },
+          {
+            binding: 5,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: {
+              type: "read-only-storage"
+            }
+          },
+          {
+            binding: 6,
+            visibility: GPUShaderStage.COMPUTE,
+            buffer: {
               type: "storage"
             }
           }
@@ -155,8 +176,8 @@ export default function init(
 
   const definitions = makeShaderDataDefinitions(collisionShader);
 
-  const enemiesCount = 8192;
-  const bulletsCount = 512;
+  const enemiesCount = 2*8192;
+  const bulletsCount = 2048;
 
   let querySet: GPUQuerySet | undefined = undefined;
   let resolveBuffer: GPUBuffer | undefined = undefined;
@@ -248,6 +269,25 @@ export default function init(
 
   console.log(cellsEnemies);
 
+  let cellsCountBuffer = device.createBuffer({
+    size: cellsCount.length * 4,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+  });
+
+  let cellsPrefixSumBuffer = device.createBuffer({
+    size: cellsPrefixSum.length * 4,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+  });
+
+  let cellsEnemiesBuffer = device.createBuffer({
+    size: cellsEnemies.length * 4,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+  });
+
+  device.queue.writeBuffer(cellsCountBuffer, 0, cellsCount.buffer, 0, cellsCount.buffer.byteLength);
+  device.queue.writeBuffer(cellsPrefixSumBuffer, 0, cellsPrefixSum.buffer, 0, cellsPrefixSum.buffer.byteLength);
+  device.queue.writeBuffer(cellsEnemiesBuffer, 0, cellsEnemies.buffer, 0, cellsEnemies.buffer.byteLength);
+
   // let enemiesInCellCount = 0;
   // cellIndexInput.on('change', function (ev) {
   //   let cell = ev.value;
@@ -298,6 +338,18 @@ export default function init(
       },
       {
         binding: 3,
+        resource: { buffer: cellsCountBuffer }
+      },
+      {
+        binding: 4,
+        resource: { buffer: cellsPrefixSumBuffer }
+      },
+      {
+        binding: 5,
+        resource: { buffer: cellsEnemiesBuffer }
+      },
+      {
+        binding: 6,
         resource: { buffer: resultsBuffer }
       }
     ]
@@ -368,7 +420,8 @@ export default function init(
       const passEncoder = commandEncoder.beginComputePass(computePassDescriptor);
       passEncoder.setPipeline(collisionPipeline);
       passEncoder.setBindGroup(0, collisionBindGroup);
-      passEncoder.dispatchWorkgroups(enemiesCount / 32, 1, 1);
+      passEncoder.dispatchWorkgroups(bulletsCount / 32, 1, 1);
+      // passEncoder.dispatchWorkgroups(enemiesCount / 32, 1, 1);
       passEncoder.end();
     }
 
@@ -405,7 +458,7 @@ export default function init(
       const times = new BigInt64Array(resolveResultBuffer.getMappedRange());
       const computePassDuration = Number(times[1] - times[0]);
 
-      // console.log(computePassDuration);
+      //console.log(computePassDuration / 1000.0);
       // In some cases the timestamps may wrap around and produce a negative
       // number as the GPU resets it's timings. These can safely be ignored.
       if (computePassDuration > 0) {
